@@ -49,9 +49,9 @@ From there, we can follow the execution tree down to the validation code as foll
 │           └── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/validate_beacon_attestation.go#L128">savePendingAtt()</a>
 └── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/pending_attestations_queue.go#L29">Service.processPendingAttsQueue()</a>
     └── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/pending_attestations_queue.go#L45">Service.processPendingAtts()</a>
-        ├── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/pending_attestations_queue.go#L229">Service.validatePendingAtts()</a>
-        └── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/pending_attestations_queue.go#L91">Service.processAttestations()</a>
-            ├── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/validate_aggregate_proof.go#L141"><b></b>validateAggregatedAtt()</b></a>
+        ├── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/pending_attestations_queue.go#L245">Service.validatePendingAtts()</a>
+        └── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/pending_attestations_queue.go#L92">Service.processAttestations()</a>
+            ├── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/validate_aggregate_proof.go#L155"><b></b>validateAggregatedAtt()</b></a>
             └── <a href="https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/validate_beacon_attestation.go#L254"><b></b>validateUnaggregatedAttWithState()</b></a>
 </pre>
 
@@ -60,3 +60,45 @@ To confirm we did not miss any important aspect of the code related to attestati
 ### 3. Code inspection: reporting code
 
 Now that we know where the relevant information is located, we need to find a way to extract it and report it.
+
+In the `validateComitteeIndexBeaconAttestation` method, there is [an interesting broadcast](https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/validate_beacon_attestation.go#L76) on the `s.cfg.attestationNotifier` member variable:
+
+```go
+// Broadcast the unaggregated attestation on a feed to notify other services in the beacon node
+// of a received unaggregated attestation.
+ s.cfg.attestationNotifier.OperationFeed().Send(&feed.Event{
+  Type: operation.UnaggregatedAttReceived,
+  Data: &operation.UnAggregatedAttReceivedData{
+   Attestation: att,
+  },
+ })
+```
+
+Which could be a hint at how to properly implementing the reporting we need. However, this Notifier is not used in `validateAggregatedAtt` (nor in `validateUnaggregatedAttWithState`). And since this `attestationNotifier` is only used to notify about valid attestations and uses types defined [in the core package](https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/core/feed/operation/events.go#L9), so it wouldn't be appropriate to extend it to notify about invalid attestations.
+
+### 4. Implementation
+
+Since we have a 4 hours time constraint and this is only an assignment, we will directly choose the obvious solution: add a member variable in the service to collect the data and lazy report the data once per epoch. Please see relevant commits in this repository.
+
+### 5. Running the code locally
+
+Use the configuration files in the `devnet` directory and follow instruction in the second part of [this guide](https://docs.prylabs.network/docs/advanced/proof-of-stake-devnet)
+
+You can build our custom beacon code as follows:
+
+```shell
+go1.22.10 build -o devnet/beacon-chain.exe ./prysm/cmd/beacon-chain
+go1.22.10 build -o devnet/validator.exe ./prysm/cmd/validator
+go1.22.10 build -o devnet/prysmctl.exe ./prysm/cmd/prysmctl
+```
+
+And run the components as follows:
+
+```shell
+./geth --http --http.api eth,net,web3 --ws --ws.api eth,net,web3 --authrpc.jwtsecret jwt.hex --datadir data/gethdata --nodiscover --syncmode full --allow-insecure-unlock --unlock 0x123463a4b065722e99115d6c222f267d9cabb524 --password password.txt
+
+./beacon-chain --datadir data/beacondata --min-sync-peers 0 --genesis-state genesis.ssz --bootstrap-node= --interop-eth1data-votes --chain-config-file config.yml --contract-deployment-block 0 --chain-id 1 --accept-terms-of-use --jwt-secret jwt.hex --suggested-fee-recipient 0x123463a4B065722E99115D6c222f267d9cABb524 --minimum-peers-per-subnet 0 --enable-debug-rpc-endpoints --execution-endpoint http://127.0.0.1:8545 --verbosity=debug
+
+./validator --datadir data/validatordata --accept-terms-of-use --interop-num-validators 64 --chain-config-file
+ config.yml
+```
