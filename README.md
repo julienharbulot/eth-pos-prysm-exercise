@@ -80,7 +80,53 @@ Which could be a hint at how to properly implementing the reporting we need. How
 
 Since we have a 4 hours time constraint and this is only an assignment, we will directly choose the obvious solution: add a member variable in the service to collect the data and lazy report the data once per epoch. Please see relevant commits in this repository.
 
-### 5. Running the code locally
+To make the report useful, we save the number of attestation that is ok (`nOk uint64`) the number of attestations that is rejected (`nErr uint64`) and for each individual error message, the number of times we have encountered this message (`map[string]uint64`).
+
+To achieve a smaller diff and make the code easier to maintain, I decided to decorate the validation functions with this pattern:
+
+```go
+func validationFunction(...) {
+    v, err := validationFunctionImpl(...)
+    updateReport(v, err)
+    return v, err
+}
+```
+
+Possible alternatives that would have required more work were:
+
+1. call the update method every time a validation function is called. This is less robust: in this alternative, everytime the validation function is called we have to remember to call the update function too.
+
+```go
+func someCallingCode() {
+  v, err := validationFunction(...)
+  updateReport(v, err)
+  if (err != nil) {
+    // other client logic
+  }
+}
+```
+
+2. call the update method in the validation function directly. This has two drawbacks: (a) the validation function shoould ideally be a pure function without side effect to make the code simpler, and (b) each validatiaon function has multiple exit point which would have required multiple call to the update function and is error prone in case another exit point is introduced later and the update function is forgotten.
+
+```go
+func validationFunction(...) {
+  if (a) {
+    updateReport(v_a, err_a)
+    return v_a, err_a
+  } else {
+    updateReport(v_not_a, err_not_a)
+    return v_not_a, err_not_a
+  }
+}
+```
+
+### 5. Possible ameliorations
+
+From a purely architectural point of view, it would be better to move the reporting to a dedicated module or service. Currently I did not find a service that would be a good fit for this data collection so I opted for a simpler implementation inside the `sync` service itself.
+
+In theory the `uint64` counter variables could overflow so having a reset logic at some point would be preferable. In practice, it is unlikely that the variables will overflow before the node is restarted. As a gauge of how big uint64 are here is a count of how many validataion per seconds we can receive if this capacity were to overflow in a year: `uint64.max / seconds_in_a_year = 584,942,417,355`.
+
+### 6. Running the code locally
 
 Use the configuration files in the `devnet` directory and follow instruction in the second part of [this guide](https://docs.prylabs.network/docs/advanced/proof-of-stake-devnet)
 
