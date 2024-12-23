@@ -21,17 +21,17 @@ are working with beacon-nodes so we will focus our attention to this component o
 
 According to the [official documentation](https://docs.prylabs.network/docs/how-prysm-works/beacon-node), the beacon-node is partitioned into several services. It seems that the [sync service](https://docs.prylabs.network/docs/how-prysm-works/beacon-node#sync-service) is where we will need to work so we will start our investigation there.
 
-Also, since a Beacon node receives attestations either directly from Validators or from other beacon-nodes through the Gossip network, we will keep an eye out from two different possible sources of incoming attestations.
+Also, since a Beacon node receives attestations from both (a) Validators directly and (b) from other beacon-nodes through the Gossip network, we will look out for two different possible sources of incoming attestations.
 
 ### 2. Code inspection: validation code
 
-Looking at [how the prysm binary is built](https://docs.prylabs.network/docs/advanced/proof-of-stake-devnet):
+Looking at [how the prysm binary is built](https://docs.prylabs.network/docs/advanced/proof-of-stake-devnet) we can see where the main package is located:
 
 ```bash
 go build -o=../beacon-chain ./cmd/beacon-chain
 ```
 
-We look for the main function in the `cmd/beacon-chain` directory: [cmd/beacon-chain/main.go:221](https://github.com/prysmaticlabs/prysm/blob/96b31a9f64a8f8b3909b11171ce3c2dab877cfc7/cmd/beacon-chain/main.go#L221).
+So we look for the main function in the `cmd/beacon-chain` directory: [cmd/beacon-chain/main.go:221](https://github.com/prysmaticlabs/prysm/blob/96b31a9f64a8f8b3909b11171ce3c2dab877cfc7/cmd/beacon-chain/main.go#L221).
 
 From there, we can follow the execution tree down to the validation code as follows:
 
@@ -61,7 +61,7 @@ To confirm we did not miss any important aspect of the code related to attestati
 
 Now that we know where the relevant information is located, we need to find a way to extract it and report it.
 
-In the `validateComitteeIndexBeaconAttestation` method, there is [an interesting broadcast](https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/validate_beacon_attestation.go#L76) on the `s.cfg.attestationNotifier` member variable:
+In the `validateComitteeIndexBeaconAttestation` method, there is [an interesting broadcast](https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/sync/validate_beacon_attestation.go#L76) using the `s.cfg.attestationNotifier` member variable:
 
 ```go
 // Broadcast the unaggregated attestation on a feed to notify other services in the beacon node
@@ -74,13 +74,16 @@ In the `validateComitteeIndexBeaconAttestation` method, there is [an interesting
  })
 ```
 
-Which could be a hint at how to properly implementing the reporting we need. However, this Notifier is not used in `validateAggregatedAtt` (nor in `validateUnaggregatedAttWithState`). And since this `attestationNotifier` is only used to notify about valid attestations and uses types defined [in the core package](https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/core/feed/operation/events.go#L9), so it wouldn't be appropriate to extend it to notify about invalid attestations.
+Which could be a hint at how to properly implement the reporting we need. However, further investigation reveals that this Notifier is neither used in `validateAggregatedAtt` nor in `validateUnaggregatedAttWithState`. Furthermore, this `attestationNotifier` is only used to notify about valid attestations and uses types defined [in the core package](https://github.com/prysmaticlabs/prysm/blob/develop/beacon-chain/core/feed/operation/events.go#L9), so it wouldn't be appropriate to extend it to notify about invalid attestations.
 
 ### 4. Implementation
 
-Since we have a 4 hours time constraint and this is only an assignment, we will directly choose the obvious solution: add a member variable in the service to collect the data and lazy report the data once per epoch. Please see relevant commits in this repository.
+Given the nature of the project (an assignment) and the time constraint (4 hours) we will directly choose the obvious solution: 
 
-To make the report useful, we save the number of attestation that is ok (`nOk uint64`) the number of attestations that is rejected (`nErr uint64`) and for each individual error message, the number of times we have encountered this message (`map[string]uint64`).
+- add a member variable in the service to collect the data, and
+- lazy report the data once per epoch.
+
+To make the report useful, we save the number of attestations that are valid (`nOk uint64`) the number of attestations that are rejected (`nErr uint64`) and for each individual error message, the number of times we have encountered this message (`map[string]uint64`). This format of data can be used to build an histogram or frequency graph later during the data analysis phase.
 
 To achieve a smaller diff and make the code easier to maintain, I decided to decorate the validation functions with this pattern:
 
@@ -90,9 +93,13 @@ func validationFunction(...) {
     updateReport(v, err)
     return v, err
 }
+
+func validationFunctionImpl(...) {
+    // original imlementation here
+}
 ```
 
-Possible alternatives that would have required more work were:
+I considered alternative ways to implement the feature but they would have required more work and would have been more fragile:
 
 1. call the update method every time a validation function is called. This is less robust: in this alternative, everytime the validation function is called we have to remember to call the update function too.
 
@@ -104,9 +111,17 @@ func someCallingCode() {
     // other client logic
   }
 }
+
+func someOtherCallingCode() {
+  v, err := validationFunction(...)
+  updateReport(v, err)
+  if (err != nil) {
+    // other client logic
+  }
+}
 ```
 
-2. call the update method in the validation function directly. This has two drawbacks: (a) the validation function shoould ideally be a pure function without side effect to make the code simpler, and (b) each validatiaon function has multiple exit point which would have required multiple call to the update function and is error prone in case another exit point is introduced later and the update function is forgotten.
+2. call the update method in the validation function directly. This has two drawbacks: (a) the validation function shoould ideally be a pure function without side effect to make the code simpler, and (b) given that each validation function has multiple exit points, this would have required multiple call to the update function, which is error prone in case another exit point is introduced later and the update function is forgotten.
 
 ```go
 func validationFunction(...) {
@@ -122,13 +137,13 @@ func validationFunction(...) {
 
 ### 5. Possible ameliorations
 
-From a purely architectural point of view, it would be better to move the reporting to a dedicated module or service. Currently I did not find a service that would be a good fit for this data collection so I opted for a simpler implementation inside the `sync` service itself.
+From a purely architectural point of view, it would be better to move the reporting to a dedicated module or service. This seems to be coherent with the current design of the codebase where we can find `metric` and `monitor` services. Currently I did not find a service that would be a good fit for this data collection so I opted for a simpler implementation inside the `sync` service itself.
 
-In theory the `uint64` counter variables could overflow so having a reset logic at some point would be preferable. In practice, it is unlikely that the variables will overflow before the node is restarted. As a gauge of how big uint64 are here is a count of how many validataion per seconds we can receive if this capacity were to overflow in a year: `uint64.max / seconds_in_a_year = 584,942,417,355`.
+In theory the `uint64` counter variables could overflow so having a reset logic at some point would be preferable. In practice, it is unlikely that the variables will overflow before the node is restarted. As a gauge of how big uint64 are, here is a count of how many validation per seconds we can receive if this capacity were to overflow in a year: `uint64.max / seconds_in_a_year = 584,942,417,355`.
 
 ### 6. Running the code locally
 
-Use the configuration files in the `devnet` directory and follow instruction in the second part of [this guide](https://docs.prylabs.network/docs/advanced/proof-of-stake-devnet)
+Use the configuration files in the `devnet` directory and follow instructions in the second part of [this guide](https://docs.prylabs.network/docs/advanced/proof-of-stake-devnet)
 
 You can build our custom beacon code as follows:
 
