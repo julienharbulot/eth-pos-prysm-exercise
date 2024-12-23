@@ -49,17 +49,19 @@ import (
 
 var _ runtime.Service = (*Service)(nil)
 
-const rangeLimit uint64 = 1024
-const seenBlockSize = 1000
-const seenBlobSize = seenBlockSize * 4 // Each block can have max 4 blobs. Worst case 164kB for cache.
-const seenUnaggregatedAttSize = 20000
-const seenAggregatedAttSize = 16384
-const seenSyncMsgSize = 1000         // Maximum of 512 sync committee members, 1000 is a safe amount.
-const seenSyncContributionSize = 512 // Maximum of SYNC_COMMITTEE_SIZE as specified by the spec.
-const seenExitSize = 100
-const seenProposerSlashingSize = 100
-const badBlockSize = 1000
-const syncMetricsInterval = 10 * time.Second
+const (
+	rangeLimit               uint64 = 1024
+	seenBlockSize                   = 1000
+	seenBlobSize                    = seenBlockSize * 4 // Each block can have max 4 blobs. Worst case 164kB for cache.
+	seenUnaggregatedAttSize         = 20000
+	seenAggregatedAttSize           = 16384
+	seenSyncMsgSize                 = 1000 // Maximum of 512 sync committee members, 1000 is a safe amount.
+	seenSyncContributionSize        = 512  // Maximum of SYNC_COMMITTEE_SIZE as specified by the spec.
+	seenExitSize                    = 100
+	seenProposerSlashingSize        = 100
+	badBlockSize                    = 1000
+	syncMetricsInterval             = 10 * time.Second
+)
 
 var (
 	// Seconds in one epoch.
@@ -78,6 +80,7 @@ type validationFn func(ctx context.Context) (pubsub.ValidationResult, error)
 // config to hold dependencies for the sync service.
 type config struct {
 	attestationNotifier           operation.Notifier
+	attestationReport             *AttestationReport
 	p2p                           p2p.P2P
 	beaconDB                      db.NoHeadAccessDatabase
 	attPool                       attestations.Pool
@@ -168,7 +171,7 @@ func NewService(ctx context.Context, opts ...Option) *Service {
 		ctx:                  ctx,
 		cancel:               cancel,
 		chainStarted:         abool.New(),
-		cfg:                  &config{clock: startup.NewClock(time.Unix(0, 0), [32]byte{})},
+		cfg:                  &config{clock: startup.NewClock(time.Unix(0, 0), [32]byte{}), attestationReport: NewAttestationReport()},
 		slotToPendingBlocks:  c,
 		seenPendingBlocks:    make(map[[32]byte]bool),
 		blkRootToPendingAtts: make(map[[32]byte][]*ethpb.SignedAggregateAttestationAndProof),

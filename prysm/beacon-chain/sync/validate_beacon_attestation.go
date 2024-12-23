@@ -33,6 +33,12 @@ import (
 // - attestation.data.slot is within the last ATTESTATION_PROPAGATION_SLOT_RANGE slots (attestation.data.slot + ATTESTATION_PROPAGATION_SLOT_RANGE >= current_slot >= attestation.data.slot).
 // - The signature of attestation is valid.
 func (s *Service) validateCommitteeIndexBeaconAttestation(ctx context.Context, pid peer.ID, msg *pubsub.Message) (pubsub.ValidationResult, error) {
+	result, err := s.validateCommitteeIndexBeaconAttestationImpl(ctx, pid, msg)
+	s.ReportAttestationValidationOutcome(result, err)
+	return result, err
+}
+
+func (s *Service) validateCommitteeIndexBeaconAttestationImpl(ctx context.Context, pid peer.ID, msg *pubsub.Message) (pubsub.ValidationResult, error) {
 	if pid == s.cfg.p2p.PeerID() {
 		return pubsub.ValidationAccept, nil
 	}
@@ -208,6 +214,12 @@ func (s *Service) validateCommitteeIndex(ctx context.Context, a *eth.Attestation
 // This validates beacon unaggregated attestation using the given state, the validation consists of bitfield length and count consistency
 // and signature verification.
 func (s *Service) validateUnaggregatedAttWithState(ctx context.Context, a *eth.Attestation, bs state.ReadOnlyBeaconState) (pubsub.ValidationResult, error) {
+	result, err := s.validateUnaggregatedAttWithStateImpl(ctx, a, bs)
+	s.ReportAttestationValidationOutcome(result, err)
+	return result, err
+}
+
+func (s *Service) validateUnaggregatedAttWithStateImpl(ctx context.Context, a *eth.Attestation, bs state.ReadOnlyBeaconState) (pubsub.ValidationResult, error) {
 	ctx, span := trace.StartSpan(ctx, "sync.validateUnaggregatedAttWithState")
 	defer span.End()
 

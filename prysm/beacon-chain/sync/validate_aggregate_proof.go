@@ -126,6 +126,12 @@ func (s *Service) validateAggregateAndProof(ctx context.Context, pid peer.ID, ms
 }
 
 func (s *Service) validateAggregatedAtt(ctx context.Context, signed *ethpb.SignedAggregateAttestationAndProof) (pubsub.ValidationResult, error) {
+	result, err := s.validateAggregatedAttImpl(ctx, signed)
+	s.ReportAttestationValidationOutcome(result, err)
+	return result, err
+}
+
+func (s *Service) validateAggregatedAttImpl(ctx context.Context, signed *ethpb.SignedAggregateAttestationAndProof) (pubsub.ValidationResult, error) {
 	ctx, span := trace.StartSpan(ctx, "sync.validateAggregatedAtt")
 	defer span.End()
 
